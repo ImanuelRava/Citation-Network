@@ -149,7 +149,7 @@ def get_network_plots(G):
         title="Citation Network",
         xaxis_title="Publication Year",
         yaxis_title="Citation Count Range",
-        yaxis=dict(tickmode='array', tickvals=list(range(1, 16)), ticktext=list(y_labels_map.values())),
+        yaxis=dict(tickmode='array', tickvals=list(range(1, 22)), ticktext=list(y_labels_map.values())),
         height=600,
         showlegend=False
     )
