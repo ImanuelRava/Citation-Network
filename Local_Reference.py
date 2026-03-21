@@ -1,3 +1,4 @@
+# Local_Reference.py
 import networkx as nx
 import matplotlib.pyplot as plt
 import numpy as np
@@ -65,7 +66,7 @@ def build_reference_network(pdf_path):
         ref_dois = []
 
     valid_refs = []
-    print(f"Processing {len(ref_dois)} references...")
+    print(f"Processing {len(ref_dois)} references")
     
     for doi in ref_dois:
         try:
@@ -78,7 +79,7 @@ def build_reference_network(pdf_path):
         except Exception:
             continue
 
-    print("Checking cross-references...")
+    print("Checking cross-references among valid references")
     for doi in valid_refs:
         try:
             time.sleep(0.4)
@@ -191,7 +192,7 @@ def plot_cross_reference_matrix(G):
     
     plt.figure(figsize=(10, 8))
     
-    sns.heatmap(matrix, cmap='Blues', xticklabels=labels, yticklabels=labels, cbar=False)
+    sns.heatmap(matrix, cmap='Blues', xticklabels=labels, yticklabels=labels, linewidths=0.5, linecolor='gray')
     
     plt.title("Cross-Reference Matrix")
     plt.xticks(rotation=90, fontsize=8)
