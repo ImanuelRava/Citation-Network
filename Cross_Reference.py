@@ -147,7 +147,7 @@ def get_cross_ref_plots(G):
             x=[x_vals[i_u], x_vals[i_v]],
             y=[y_vals[i_u], y_vals[i_v]],
             mode='lines',
-            line=dict(color='rgba(100,100,100,0.3)', width=1),
+            line=dict(color='rgba(100,100,100,0.2)', width=1),
             hoverinfo='none',
             showlegend=False
         ))
@@ -179,11 +179,9 @@ def get_cross_ref_plots(G):
     ))
 
     # Added: Y-axis label mapping
-    y_labels_map = {
-        1: "<20", 2: "20-40", 3: "40-60", 4: "60-80", 5: "80-100",
-        6: "100-120", 7: "120-140", 8: "140-160", 9: "160-180", 10: "180-200",
-        11: "200-300", 12: "300-400", 13: "400-500", 14: "500-1000", 15: ">1000"
-    }
+    y_labels_map = {i: f"{(i-1)*20}-{i*20}" for i in range(1, 15)}
+    y_labels_map[1] = "<20"
+    y_labels_map[15] = ">1000"
 
     fig1.update_layout(
         title='Local Citation Network',

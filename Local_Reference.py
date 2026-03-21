@@ -101,7 +101,7 @@ def get_network_plots(G):
         if u == main_node:
             color = 'rgba(128, 0, 128, 0.5)' # Purple
         else:
-            color = 'rgba(128, 128, 128, 0.4)' # Gray
+            color = 'rgba(128, 128, 128, 0.2)' # Gray
             
         fig1.add_trace(go.Scatter(
             x=[years_j[i_u], years_j[i_v]], 
@@ -115,8 +115,16 @@ def get_network_plots(G):
     # Draw Nodes
     colors = ['#FF4444' if G.nodes[n].get('is_main') else '#88C0D0' for n in nodes]
     
+    # --- NEW FEATURE: Calculate Local Citations ---
+    # Local citation = In-degree (number of edges pointing TO this node from within the dataset)
+    local_citations = [G.in_degree(n) for n in nodes]
+    
     hover_texts = [
-        f"DOI: {n}<br>Author: {G.nodes[n].get('author')}<br>Year: {years[i]}<br>Citations: {raw_citations[i]}"
+        f"DOI: {n}<br>"
+        f"Author: {G.nodes[n].get('author')}<br>"
+        f"Year: {years[i]}<br>"
+        f"Global Citations: {raw_citations[i]}<br>"
+        f"Local Citations: {local_citations[i]}" 
         for i, n in enumerate(nodes)
     ]
 
