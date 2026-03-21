@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+networkx
+plotly
+pdfplumber
+requests
+openpyxl
+xlrd
+kaleido

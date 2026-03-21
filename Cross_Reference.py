@@ -1,33 +1,57 @@
 # Cross_Reference.py
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import networkx as nx
-import mplcursors
+import random
 from DOI import get_paper_details
 
-def read_dois_from_excel(excel_path):
+# --- Added Logic: Citation Class Function ---
+def get_citation_class(citations):
+    if citations < 20: return 1
+    elif citations < 40: return 2
+    elif citations < 60: return 3
+    elif citations < 80: return 4
+    elif citations < 100: return 5
+    elif citations < 120: return 6
+    elif citations < 140: return 7
+    elif citations < 160: return 8
+    elif citations < 180: return 9
+    elif citations < 200: return 10
+    elif citations < 300: return 11
+    elif citations < 400: return 12
+    elif citations < 500: return 13
+    elif citations < 1000: return 14
+    else: return 15
+# ---------------------------------------------
+
+def read_dois_from_excel(excel_file_like):
     try:
-        df = pd.read_excel(excel_path)
+        df = pd.read_excel(excel_file_like)
         return df.iloc[:, 0].dropna().tolist()
     except Exception as e:
-        print(f"Error reading Excel file {excel_path}: {e}")
+        print(f"Error reading Excel file: {e}")
         return []
 
-def fetch_all_details(dois):
+def fetch_all_details(dois, progress_callback=None):
     details, labels = {}, {}
+    total = len(dois)
     
-    print(f"Fetching details for {len(dois)} DOIs")
-    for doi in dois:
+    for i, doi in enumerate(dois):
+        if progress_callback: progress_callback(f"Fetching DOI {i+1}/{total}...")
         try:
-            corresponding_author, publication_year, _, references = get_paper_details(doi)
-            citation_count = sum(1 for ref in references if 'DOI' in ref) # Local citation count based on references
+            # Modified: Unpacked global_citations (3rd return value)
+            corresponding_author, publication_year, global_citations, references = get_paper_details(doi)
+            
+            # Existing logic for local reference count
+            citation_count = sum(1 for ref in references if 'DOI' in ref) 
+            
             details[doi] = references
             labels[doi] = {
                 "author": corresponding_author,
                 "year": publication_year,
                 "citations": citation_count,
+                "global_citations": global_citations, # Added: Store global citations
             }
         except Exception as e:
             print(f"Error fetching details for DOI {doi}: {e}")
@@ -37,7 +61,6 @@ def fetch_all_details(dois):
 def create_adjacency_matrix(dois, details):
     n = len(dois)
     matrix = np.zeros((n, n), dtype=int)
-
     doi_index = {doi: idx for idx, doi in enumerate(dois)}
     for i, doi in enumerate(dois):
         if doi in details:
@@ -45,41 +68,141 @@ def create_adjacency_matrix(dois, details):
             for j, target_doi in enumerate(dois):
                 if i != j and target_doi in ref_dois:
                     matrix[i][j] = 1
-
     return matrix
 
-def build_cross_reference_network(excel_path):
-    dois = read_dois_from_excel(excel_path)
+def build_cross_reference_network(excel_file_like, progress_callback=None):
+    dois = read_dois_from_excel(excel_file_like)
     if not dois:
-        print("No DOIs found.")
+        if progress_callback: progress_callback("No DOIs found in Excel.")
         return None
 
-    details, labels = fetch_all_details(dois)
+    details, labels = fetch_all_details(dois, progress_callback)
     
     valid_dois = [d for d in dois if d in labels]
-    
-    if not valid_dois:
-        return None
+    if not valid_dois: return None
         
     adjacency_matrix = create_adjacency_matrix(valid_dois, details)
     
     G = nx.DiGraph()
-    
     for doi in valid_dois:
         citation_count = labels[doi]['citations']
-        # Note: storing author in 'label' attribute
-        G.add_node(doi, label=labels[doi]['author'], citing_count=citation_count, year=labels[doi]['year'])
+        # Added: Pass global_citations to node
+        G.add_node(doi, label=labels[doi]['author'], citing_count=citation_count, year=labels[doi]['year'], global_citations=labels[doi]['global_citations'])
 
     n = adjacency_matrix.shape[0]
     for i in range(n):
         for j in range(n):
             if adjacency_matrix[i][j] == 1:
                 G.add_edge(valid_dois[j], valid_dois[i])
-                
     return G
 
-def plot_cross_reference_matrix(G):
+def get_cross_ref_plots(G):
+    if not G or G.number_of_nodes() == 0:
+        return None, None
+
     nodes = list(G.nodes())
+    
+    # --- Plot 1: Network Graph (Year vs Citation Count) ---
+    
+    # 1. Calculate Positions (X=Year, Y=Citation Count)
+    valid_years = []
+    for node in G.nodes():
+        try:
+            year_int = int(G.nodes[node]['year'])
+            valid_years.append(year_int)
+        except:
+            continue
+            
+    min_valid_year = min(valid_years) if valid_years else 2000
+    invalid_year_x = min_valid_year - 5
+
+    x_vals = []
+    y_vals = []
+    
+    # Added: Logic to bin citations and create Y-values
+    raw_citations = [G.nodes[n].get('global_citations', 0) for n in nodes]
+    y_classes = [get_citation_class(c) for c in raw_citations]
+
+    for i, node in enumerate(nodes):
+        # X-axis: Year
+        try:
+            x = int(G.nodes[node]['year'])
+        except:
+            x = invalid_year_x
+        x_vals.append(x + random.uniform(-0.2, 0.2))
+        
+        # Y-axis: Citation Class
+        y = y_classes[i]
+        y_vals.append(y + random.uniform(-0.1, 0.1))
+
+    fig1 = go.Figure()
+
+    node_idx_map = {node: i for i, node in enumerate(nodes)}
+    
+    for u, v in G.edges():
+        i_u = node_idx_map[u]
+        i_v = node_idx_map[v]
+        
+        fig1.add_trace(go.Scatter(
+            x=[x_vals[i_u], x_vals[i_v]],
+            y=[y_vals[i_u], y_vals[i_v]],
+            mode='lines',
+            line=dict(color='rgba(100,100,100,0.3)', width=1),
+            hoverinfo='none',
+            showlegend=False
+        ))
+
+    local_citations = [G.in_degree(n) for n in nodes]
+    
+    hover_texts = [
+        f"Author: {G.nodes[n]['label']}<br>"
+        f"Year: {G.nodes[n]['year']}<br>"
+        f"Global Citations: {raw_citations[i]}<br>" # Added: Show global citations in hover
+        f"Local Citations: {local_citations[i]}"
+        for i, n in enumerate(nodes)
+    ]
+
+    fig1.add_trace(go.Scatter(
+        x=x_vals,
+        y=y_vals,
+        mode='markers',
+        marker=dict(
+            size=10,
+            color=local_citations, 
+            colorscale='Viridis',
+            showscale=False, # Kept False as per previous request
+            line_width=1
+        ),
+        hovertext=hover_texts,
+        hoverinfo='text',
+        showlegend=False
+    ))
+
+    # Added: Y-axis label mapping
+    y_labels_map = {
+        1: "<20", 2: "20-40", 3: "40-60", 4: "60-80", 5: "80-100",
+        6: "100-120", 7: "120-140", 8: "140-160", 9: "160-180", 10: "180-200",
+        11: "200-300", 12: "300-400", 13: "400-500", 14: "500-1000", 15: ">1000"
+    }
+
+    fig1.update_layout(
+        title='Local Citation Network',
+        xaxis_title='Publication Year',
+        yaxis_title='Citation Count Range', # Updated Title
+        hovermode='closest',
+        xaxis=dict(showgrid=True, zeroline=True, showticklabels=True),
+        # Modified: Y-axis ticks to match bins
+        yaxis=dict(
+            tickmode='array',
+            tickvals=list(range(1, 16)),
+            ticktext=list(y_labels_map.values()),
+            showgrid=True, 
+            zeroline=True
+        ),
+        showlegend=False,
+    )
+
+    # --- Plot 2: Heatmap Matrix ---
     n = len(nodes)
     matrix = np.zeros((n, n), dtype=int)
     node_idx = {node: i for i, node in enumerate(nodes)}
@@ -90,78 +213,20 @@ def plot_cross_reference_matrix(G):
         
     labels = [f"{G.nodes[n].get('label','?')} ({G.nodes[n].get('year','?')})" for n in nodes]
     
-    plt.figure(figsize=(10, 8))
+    fig2 = go.Figure(data=go.Heatmap(
+        z=matrix,
+        x=labels,
+        y=labels,
+        colorscale='Blues',
+        showscale=False,
+        showlegend=False
+    ))
     
-    sns.heatmap(matrix, cmap='Blues', xticklabels=labels, yticklabels=labels, cbar=False, linewidths=0.5, linecolor='gray')
-    
-    plt.title("Cross-Reference Matrix")
-    plt.xticks(rotation=90, fontsize=8)
-    plt.yticks(fontsize=8)
-    plt.tight_layout()
+    fig2.update_layout(
+        title="Cross-Reference Matrix",
+        xaxis=dict(tickangle=90, tickfont=dict(size=10)),
+        yaxis=dict(tickfont=dict(size=10)),
+        height=700, width=700,
+    )
 
-def plot_cross_reference_network(G):
-    if not G or G.number_of_nodes() == 0:
-        print("No data to plot.")
-        return
-
-    # --- Plot 1: Network Graph ---
-    plt.figure(figsize=(12, 8))
-    
-    # --- Positioning Logic ---
-    pos = {}
-    
-    valid_years = []
-    for node in G.nodes():
-        try:
-            year_int = int(G.nodes[node]['year'])
-            valid_years.append(year_int)
-        except (ValueError, TypeError):
-            continue
-            
-    min_valid_year = min(valid_years) if valid_years else 0
-    invalid_year_x = min_valid_year - 1
-
-    for node in G.nodes():
-        y_val = G.nodes[node]['citing_count']
-        
-        try:
-            x_val = int(G.nodes[node]['year'])
-        except (ValueError, TypeError):
-            x_val = invalid_year_x
-            
-        pos[node] = (x_val, y_val)
-    
-    # --- Color and Size ---
-    max_citing_count = max((data['citing_count'] for _, data in G.nodes(data=True)), default=1)
-
-    node_colors = [
-        plt.cm.coolwarm(data['citing_count'] / max(1, max_citing_count)) for _, data in G.nodes(data=True)
-    ]
-
-    nodes = nx.draw_networkx_nodes(G, pos, node_color=node_colors, node_size=200)
-
-    nx.draw_networkx_edges(G, pos, alpha=0.2, edge_color='black', arrowstyle='-|>', arrowsize=10)
-
-    # --- Hover Tooltips ---
-    tooltip_data = [
-        (f'DOI: {doi}\n'
-         f'Author: {G.nodes[doi]["label"]}\n'
-         f'Publication Year: {G.nodes[doi]["year"]}\n'
-         f'Citations: {G.nodes[doi]["citing_count"]}\n'
-         f'Local Citations: {G.in_degree(doi)}')
-        for doi in G.nodes()
-    ]
-
-    mplcursors.cursor(nodes).connect("add", lambda sel: sel.annotation.set_text(tooltip_data[sel.index]))
-
-    plt.title('Local Citation Network')
-    
-    plt.xlabel('Publication Year')
-    plt.ylabel('Citation Count')
-    plt.grid(True, linestyle=':', alpha=0.6)
-    plt.axis('on') 
-    
-    plt.tight_layout()
-    plot_cross_reference_matrix(G)
-
-    plt.show()
+    return fig1, fig2

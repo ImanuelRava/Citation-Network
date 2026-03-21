@@ -1,52 +1,34 @@
 # Local_Reference.py
 import networkx as nx
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import numpy as np
-import seaborn as sns
 import time
 import random
-import mplcursors
-
 from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois
 
 def get_citation_class(citations):
-    if citations < 20:
-        return 1
-    elif citations < 40:
-        return 2
-    elif citations < 60:
-        return 3
-    elif citations < 80:
-        return 4
-    elif citations < 100:
-        return 5
-    elif citations < 120:
-        return 6
-    elif citations < 140:
-        return 7
-    elif citations < 160:
-        return 8
-    elif citations < 180:
-        return 9
-    elif citations < 200:
-        return 10
-    elif citations < 300:
-        return 11
-    elif citations < 400:
-        return 12
-    elif citations < 500:
-        return 13
-    elif citations < 1000:
-        return 14
-    else: # >= 1000
-        return 15
+    if citations < 20: return 1
+    elif citations < 40: return 2
+    elif citations < 60: return 3
+    elif citations < 80: return 4
+    elif citations < 100: return 5
+    elif citations < 120: return 6
+    elif citations < 140: return 7
+    elif citations < 160: return 8
+    elif citations < 180: return 9
+    elif citations < 200: return 10
+    elif citations < 300: return 11
+    elif citations < 400: return 12
+    elif citations < 500: return 13
+    elif citations < 1000: return 14
+    else: return 15
 
-def build_reference_network(pdf_path):
+def build_reference_network(pdf_path, progress_callback=None):
     try:
         main_doi = extract_doi_from_pdf(pdf_path)
-        print(f"Main DOI: {main_doi}")
+        if progress_callback: progress_callback(f"Main DOI found: {main_doi}")
     except ValueError as e:
-        print(e)
+        if progress_callback: progress_callback(f"Error: {e}")
         return None
 
     G = nx.DiGraph()
@@ -56,7 +38,7 @@ def build_reference_network(pdf_path):
         G.add_node(main_doi, author=main_author or "Unknown", year=main_year or 0, 
                    citations=main_citations, is_main=True)
     except Exception as e:
-        print(f"Error fetching main paper: {e}")
+        if progress_callback: progress_callback(f"Error fetching main paper: {e}")
         return None
 
     try:
@@ -66,9 +48,10 @@ def build_reference_network(pdf_path):
         ref_dois = []
 
     valid_refs = []
-    print(f"Processing {len(ref_dois)} references")
+    total_refs = len(ref_dois)
     
-    for doi in ref_dois:
+    for i, doi in enumerate(ref_dois):
+        if progress_callback: progress_callback(f"Processing reference {i+1}/{total_refs}...")
         try:
             time.sleep(0.4) # Be polite to API
             author, year, cites, _ = get_paper_details(doi)
@@ -79,8 +62,8 @@ def build_reference_network(pdf_path):
         except Exception:
             continue
 
-    print("Checking cross-references among valid references")
-    for doi in valid_refs:
+    if progress_callback: progress_callback("Checking cross-references...")
+    for i, doi in enumerate(valid_refs):
         try:
             time.sleep(0.4)
             _, _, _, sources = get_paper_details(doi)
@@ -93,93 +76,72 @@ def build_reference_network(pdf_path):
             
     return G
 
-def plot_networks(G):
+def get_network_plots(G):
     if not G or G.number_of_nodes() < 2:
-        print("Not enough data to plot.")
-        return
+        return None, None
 
-    fig1, ax = plt.subplots(figsize=(14, 10))
+    # --- PLOT 1: Citation Network Scatter ---
     nodes = list(G.nodes())
-    
     years = [G.nodes[n].get('year', 0) for n in nodes]
     raw_citations = [G.nodes[n].get('citations', 0) for n in nodes]
-
     y_classes = [get_citation_class(c) for c in raw_citations]
     
+    # Add jitter
     years_j = [y + random.uniform(-0.3, 0.3) for y in years]
-
     y_j = [y + random.uniform(-0.1, 0.1) for y in y_classes]
-    
+
     main_node = nodes[0]
     
+    fig1 = go.Figure()
+
+    # Draw Edges
     for u, v in G.edges():
         i_u, i_v = nodes.index(u), nodes.index(v)
         
         if u == main_node:
-            linestyle = '-'
-            color = 'purple'
-            alpha = 0.3
+            color = 'rgba(128, 0, 128, 0.5)' # Purple
         else:
-            linestyle = '--'
-            color = 'gray'
-            alpha = 0.4
+            color = 'rgba(128, 128, 128, 0.4)' # Gray
             
-        ax.plot([years_j[i_u], years_j[i_v]], [y_j[i_u], y_j[i_v]], 
-                color=color, linestyle=linestyle, alpha=alpha, zorder=1)
+        fig1.add_trace(go.Scatter(
+            x=[years_j[i_u], years_j[i_v]], 
+            y=[y_j[i_u], y_j[i_v]],
+            mode='lines',
+            line=dict(color=color, width=1),
+            hoverinfo='none',
+            showlegend=False
+        ))
 
+    # Draw Nodes
     colors = ['#FF4444' if G.nodes[n].get('is_main') else '#88C0D0' for n in nodes]
-    scatter = ax.scatter(years_j, y_j, c=colors, s=100, zorder=2)
-
-    hover_texts = []
-    for i, n in enumerate(nodes):
-        txt = (f"DOI: {n}\n"
-               f"Author: {G.nodes[n].get('author')}\n"
-               f"Year: {years[i]}\n"
-               f"Citations: {raw_citations[i]}")
-        hover_texts.append(txt)
     
-    cursor = mplcursors.cursor(scatter, hover=True)
-    @cursor.connect("add")
-    def on_add(sel):
-        sel.annotation.set_text(hover_texts[sel.index])
-        sel.annotation.get_bbox_patch().set(fc="lightyellow", alpha=0.9)
+    hover_texts = [
+        f"DOI: {n}<br>Author: {G.nodes[n].get('author')}<br>Year: {years[i]}<br>Citations: {raw_citations[i]}"
+        for i, n in enumerate(nodes)
+    ]
 
-    y_labels_map = {
-        1: "<20",
-        2: "20-40",
-        3: "40-60",
-        4: "60-80",
-        5: "80-100",
-        6: "100-120",
-        7: "120-140",
-        8: "140-160",
-        9: "160-180",
-        10: "180-200",
-        11: "200-300",
-        12: "300-400",
-        13: "400-500",
-        14: "500-1000",
-        15: ">1000"
-    }
+    fig1.add_trace(go.Scatter(
+        x=years_j, y=y_j,
+        mode='markers',
+        marker=dict(size=10, color=colors),
+        hovertext=hover_texts,
+        hoverinfo='text'
+    ))
 
-    ax.set_yticks(range(1, 16))
-
-    ax.set_yticklabels([y_labels_map[i] for i in range(1, 16)], fontsize=9)
-
-    ax.set_ylim(0.5, 15.5)
-
-    ax.set_title("Citation Network")
-    ax.set_xlabel("Publication Year")
-    ax.set_ylabel("Citation Count Range") 
-    ax.grid(True, linestyle=':', alpha=0.5)
-    fig1.tight_layout()
+    y_labels_map = {i: f"{(i-1)*20}-{i*20}" for i in range(1, 15)}
+    y_labels_map[1] = "<20"
+    y_labels_map[15] = ">1000"
     
-    plot_cross_reference_matrix(G)
+    fig1.update_layout(
+        title="Citation Network",
+        xaxis_title="Publication Year",
+        yaxis_title="Citation Count Range",
+        yaxis=dict(tickmode='array', tickvals=list(range(1, 16)), ticktext=list(y_labels_map.values())),
+        height=600,
+        showlegend=False
+    )
 
-    plt.show()
-
-def plot_cross_reference_matrix(G):
-    nodes = list(G.nodes())
+    # --- PLOT 2: Cross-Reference Matrix Heatmap ---
     n = len(nodes)
     matrix = np.zeros((n, n), dtype=int)
     node_idx = {n: i for i, n in enumerate(nodes)}
@@ -190,11 +152,21 @@ def plot_cross_reference_matrix(G):
             
     labels = [f"{G.nodes[n].get('author','?')} ({G.nodes[n].get('year','?')})" for n in nodes]
     
-    plt.figure(figsize=(10, 8))
+    fig2 = go.Figure(data=go.Heatmap(
+        z=matrix,
+        x=labels,
+        y=labels,
+        colorscale='Blues',
+        showscale=False,
+        showlegend=False
+    ))
     
-    sns.heatmap(matrix, cmap='Blues', xticklabels=labels, yticklabels=labels, linewidths=0.5, linecolor='gray')
-    
-    plt.title("Cross-Reference Matrix")
-    plt.xticks(rotation=90, fontsize=8)
-    plt.yticks(fontsize=8)
-    plt.tight_layout()
+    fig2.update_layout(
+        title="Cross-Reference Matrix",
+        xaxis=dict(tickangle=90, tickfont=dict(size=10)),
+        yaxis=dict(tickfont=dict(size=10)),
+        height=700,
+        width=700
+    )
+
+    return fig1, fig2
