@@ -6,7 +6,6 @@ import networkx as nx
 import random
 from DOI import get_paper_details
 
-# --- Added Logic: Citation Class Function ---
 def get_citation_class(citations):
     if citations < 50: return 1
     elif citations < 100: return 2
@@ -44,18 +43,18 @@ def fetch_all_details(dois, progress_callback=None):
     for i, doi in enumerate(dois):
         if progress_callback: progress_callback(f"Fetching DOI {i+1}/{total}...")
         try:
-            # Modified: Unpacked global_citations (3rd return value)
-            corresponding_author, publication_year, global_citations, references = get_paper_details(doi)
+            # Unpack 5 values (added title)
+            corresponding_author, publication_year, global_citations, references, title = get_paper_details(doi)
             
-            # Existing logic for local reference count
             citation_count = sum(1 for ref in references if 'DOI' in ref) 
             
             details[doi] = references
             labels[doi] = {
                 "author": corresponding_author,
                 "year": publication_year,
-                "citations": citation_count,
-                "global_citations": global_citations, # Added: Store global citations
+                "global_citations": global_citations,
+                "ref_count": citation_count,
+                "title": title
             }
         except Exception as e:
             print(f"Error fetching details for DOI {doi}: {e}")
@@ -89,9 +88,13 @@ def build_cross_reference_network(excel_file_like, progress_callback=None):
     
     G = nx.DiGraph()
     for doi in valid_dois:
-        citation_count = labels[doi]['citations']
-        # Added: Pass global_citations to node
-        G.add_node(doi, label=labels[doi]['author'], citing_count=citation_count, year=labels[doi]['year'], global_citations=labels[doi]['global_citations'])
+        data = labels[doi]
+        G.add_node(doi, 
+                   label=data['author'], 
+                   year=data['year'], 
+                   global_citations=data['global_citations'],
+                   ref_count=data['ref_count'],
+                   title=data['title'])
 
     n = adjacency_matrix.shape[0]
     for i in range(n):
@@ -106,9 +109,6 @@ def get_cross_ref_plots(G):
 
     nodes = list(G.nodes())
     
-    # --- Plot 1: Network Graph (Year vs Citation Count) ---
-    
-    # 1. Calculate Positions (X=Year, Y=Citation Count)
     valid_years = []
     for node in G.nodes():
         try:
@@ -123,19 +123,16 @@ def get_cross_ref_plots(G):
     x_vals = []
     y_vals = []
     
-    # Added: Logic to bin citations and create Y-values
     raw_citations = [G.nodes[n].get('global_citations', 0) for n in nodes]
     y_classes = [get_citation_class(c) for c in raw_citations]
 
     for i, node in enumerate(nodes):
-        # X-axis: Year
         try:
             x = int(G.nodes[node]['year'])
         except:
             x = invalid_year_x
         x_vals.append(x + random.uniform(-0.2, 0.2))
         
-        # Y-axis: Citation Class
         y = y_classes[i]
         y_vals.append(y + random.uniform(-0.1, 0.1))
 
@@ -151,17 +148,19 @@ def get_cross_ref_plots(G):
             x=[x_vals[i_u], x_vals[i_v]],
             y=[y_vals[i_u], y_vals[i_v]],
             mode='lines',
-            line=dict(color='rgba(100,100,100,0.2)', width=1),
+            line=dict(color='rgba(100,100,100,0.3)', width=1),
             hoverinfo='none',
-            showlegend=False
+            showlegend=False,
+            name=''
         ))
 
     local_citations = [G.in_degree(n) for n in nodes]
     
     hover_texts = [
+        f"Title: {G.nodes[n].get('title', 'N/A')}<br>"
         f"Author: {G.nodes[n]['label']}<br>"
         f"Year: {G.nodes[n]['year']}<br>"
-        f"Global Citations: {raw_citations[i]}<br>" # Added: Show global citations in hover
+        f"Global Citations: {raw_citations[i]}<br>"
         f"Local Citations: {local_citations[i]}"
         for i, n in enumerate(nodes)
     ]
@@ -174,32 +173,33 @@ def get_cross_ref_plots(G):
             size=10,
             color=local_citations, 
             colorscale='Viridis',
-            showscale=False, # Kept False as per previous request
+            showscale=False, 
             line_width=1
         ),
         hovertext=hover_texts,
         hoverinfo='text',
-        showlegend=False
+        showlegend=False,
+        name=''
     ))
 
-    y_labels_map = {i: f"{(i-1)*50}-{i*50}" for i in range(1, 21)}
+    y_labels_map = {i: f"{(i-1)*50}-{i*50}" for i in range(1, 22)}
     y_labels_map[1] = "<50"
     y_labels_map[21] = ">1000"
 
     fig1.update_layout(
         title='Local Citation Network',
         xaxis_title='Publication Year',
-        yaxis_title='Citation Count Range', # Updated Title
+        yaxis_title='Citation Count Range',
         hovermode='closest',
+        showlegend=False,
         xaxis=dict(showgrid=True, zeroline=True, showticklabels=True),
         yaxis=dict(
             tickmode='array',
-            tickvals=list(range(1, 22)),
+            tickvals=list(range(1, 16)),
             ticktext=list(y_labels_map.values()),
             showgrid=True, 
             zeroline=True
-        ),
-        showlegend=False,
+        )
     )
 
     # --- Plot 2: Heatmap Matrix ---
@@ -226,7 +226,7 @@ def get_cross_ref_plots(G):
         title="Cross-Reference Matrix",
         xaxis=dict(tickangle=90, tickfont=dict(size=10)),
         yaxis=dict(tickfont=dict(size=10)),
-        height=700, width=700,
+        height=700, width=700
     )
 
     return fig1, fig2
