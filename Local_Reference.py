@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import numpy as np
 import time
 import random
-from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois
+from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois, get_citing_papers
 
 def get_citation_class(citations):
     if citations < 50: return 1
@@ -29,23 +29,26 @@ def get_citation_class(citations):
     else: return 21
 
 def build_reference_network(pdf_path, progress_callback=None):
+    # 1. Extract Main DOI
     try:
         main_doi = extract_doi_from_pdf(pdf_path)
         if progress_callback: progress_callback(f"Main DOI found: {main_doi}")
     except ValueError as e:
         if progress_callback: progress_callback(f"Error: {e}")
-        return None
+        return None, []
 
     G = nx.DiGraph()
 
+    # 2. Get Main Paper Details
     try:
         main_author, main_year, main_citations, _ = get_paper_details(main_doi)
         G.add_node(main_doi, author=main_author or "Unknown", year=main_year or 0, 
                    citations=main_citations, is_main=True)
     except Exception as e:
         if progress_callback: progress_callback(f"Error fetching main paper: {e}")
-        return None
+        return None, []
 
+    # 3. Get References of Main Paper
     try:
         _, _, _, main_refs = get_paper_details(main_doi)
         ref_dois = get_referenced_dois(main_refs)
@@ -55,10 +58,11 @@ def build_reference_network(pdf_path, progress_callback=None):
     valid_refs = []
     total_refs = len(ref_dois)
     
+    # 4. Build Network (Backward Citations)
     for i, doi in enumerate(ref_dois):
         if progress_callback: progress_callback(f"Processing reference {i+1}/{total_refs}...")
         try:
-            time.sleep(0.4) # Be polite to API
+            time.sleep(0.4) 
             author, year, cites, _ = get_paper_details(doi)
             G.add_node(doi, author=author or "Unknown", year=year or 0, 
                        citations=cites, is_main=False)
@@ -67,7 +71,8 @@ def build_reference_network(pdf_path, progress_callback=None):
         except Exception:
             continue
 
-    if progress_callback: progress_callback("Checking cross-references...")
+    # 5. Check Cross-References (Calculates Local Citations)
+    if progress_callback: progress_callback("Checking cross-references (Local Citations)...")
     for i, doi in enumerate(valid_refs):
         try:
             time.sleep(0.4)
@@ -78,8 +83,111 @@ def build_reference_network(pdf_path, progress_callback=None):
                     G.add_edge(doi, c)
         except Exception:
             continue
+
+    # ---------------------------------------------------------
+    # NEW SUGGESTION LOGIC STARTS HERE
+    # ---------------------------------------------------------
+    suggestions = []
+    LIMIT = 10
+    
+    if progress_callback: progress_callback("Generating suggestions...")
+
+    # CRITERIA 1: Top 10 articles citing the main paper
+    try:
+        citing_papers = get_citing_papers(main_doi)
+        citing_papers.sort(key=lambda x: x['citations'], reverse=True)
+        
+        for p in citing_papers:
+            p['source'] = 'Cites Main Paper'
+        
+        # Take up to LIMIT
+        suggestions.extend(citing_papers[:LIMIT])
+    except Exception as e:
+        print(f"Error fetching forward citations: {e}")
+
+    # CRITERIA 2: Fill with references having highest Local Citation
+    if len(suggestions) < LIMIT:
+        needed = LIMIT - len(suggestions)
+        
+        # Calculate local citations (in_degree) for all references
+        # valid_refs contains DOIs of references
+        ref_local_citations = []
+        for doi in valid_refs:
+            local_cite_count = G.in_degree(doi)
+            # Get stored global data
+            node_data = G.nodes[doi]
+            ref_local_citations.append({
+                'doi': doi,
+                'title': f"Reference: {node_data.get('author', '?')} ({node_data.get('year', '?')})", # We don't have title here, constructing a label
+                'citations': node_data.get('citations', 0),
+                'year': node_data.get('year'),
+                'author': node_data.get('author'),
+                'local_citations': local_cite_count,
+                'source': 'High Local Citation'
+            })
+        
+        # Sort by local citation count descending
+        ref_local_citations.sort(key=lambda x: x['local_citations'], reverse=True)
+        
+        # Add top ones
+        count_added = 0
+        for item in ref_local_citations:
+            # Avoid duplicates if somehow already in suggestions (unlikely but safe)
+            if item['doi'] not in [s['doi'] for s in suggestions]:
+                suggestions.append(item)
+                count_added += 1
+                if count_added >= needed:
+                    break
+
+    # CRITERIA 3: Fill with reference having highest Global Citation + its forward citations
+    if len(suggestions) < LIMIT:
+        needed = LIMIT - len(suggestions)
+        
+        # Sort valid references by global citation count
+        ref_global_citations = []
+        for doi in valid_refs:
+            node_data = G.nodes[doi]
+            ref_global_citations.append({
+                'doi': doi,
+                'citations': node_data.get('citations', 0),
+                'author': node_data.get('author'),
+                'year': node_data.get('year')
+            })
+        
+        ref_global_citations.sort(key=lambda x: x['citations'], reverse=True)
+        
+        # Find the top reference that isn't already in suggestions
+        top_ref = None
+        for r in ref_global_citations:
+            if r['doi'] not in [s['doi'] for s in suggestions]:
+                top_ref = r
+                break
+        
+        if top_ref:
+            # Add the reference itself
+            suggestions.append({
+                'doi': top_ref['doi'],
+                'title': f"Reference: {top_ref['author']} ({top_ref['year']})",
+                'citations': top_ref['citations'],
+                'year': top_ref['year'],
+                'author': top_ref['author'],
+                'source': 'High Global Citation Reference'
+            })
             
-    return G
+            # Get papers citing this reference
+            if len(suggestions) < LIMIT:
+                citing_top_ref = get_citing_papers(top_ref['doi'])
+                citing_top_ref.sort(key=lambda x: x['citations'], reverse=True)
+                
+                for p in citing_top_ref:
+                    p['source'] = f"Cites Ref ({top_ref['author']})"
+                    # Check duplicate
+                    if p['doi'] not in [s['doi'] for s in suggestions]:
+                        suggestions.append(p)
+                        if len(suggestions) >= LIMIT:
+                            break
+
+    return G, suggestions
 
 def get_network_plots(G):
     if not G or G.number_of_nodes() < 2:
@@ -106,7 +214,7 @@ def get_network_plots(G):
         if u == main_node:
             color = 'rgba(128, 0, 128, 0.5)' # Purple
         else:
-            color = 'rgba(128, 128, 128, 0.2)' # Gray
+            color = 'rgba(128, 128, 128, 0.4)' # Gray
             
         fig1.add_trace(go.Scatter(
             x=[years_j[i_u], years_j[i_v]], 
@@ -120,8 +228,6 @@ def get_network_plots(G):
     # Draw Nodes
     colors = ['#FF4444' if G.nodes[n].get('is_main') else '#88C0D0' for n in nodes]
     
-    # --- NEW FEATURE: Calculate Local Citations ---
-    # Local citation = In-degree (number of edges pointing TO this node from within the dataset)
     local_citations = [G.in_degree(n) for n in nodes]
     
     hover_texts = [

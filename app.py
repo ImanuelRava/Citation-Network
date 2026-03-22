@@ -41,8 +41,8 @@ if uploaded_file is not None:
         def update_status(msg):
             status_placeholder.info(msg)
 
-        # Build Graph
-        G = Local_Reference.build_reference_network(tmp_path, progress_callback=update_status)
+        # Build Graph (Returns G and suggestions)
+        G, suggestions = Local_Reference.build_reference_network(tmp_path, progress_callback=update_status)
         
         # Clean up temp file
         os.unlink(tmp_path)
@@ -51,6 +51,7 @@ if uploaded_file is not None:
             status_placeholder.success("Processing Complete!")
             st.write(f"**Nodes found:** {G.number_of_nodes()}")
             
+            # --- 1. DISPLAY PLOTS FIRST ---
             # Get Plots
             fig_net, fig_mat = Local_Reference.get_network_plots(G)
             
@@ -61,6 +62,32 @@ if uploaded_file is not None:
                 
             with tab2:
                 st.plotly_chart(fig_mat, use_container_width=True)
+
+            # --- 2. DISPLAY SUGGESTIONS SECOND ---
+            st.divider() # Visual separator
+            if suggestions:
+                st.subheader("📚 Recommended Articles")
+                st.markdown("Suggestions based on citation impact and network analysis:")
+                
+                for i, paper in enumerate(suggestions):
+                    title = paper.get('title', 'Unknown Title')
+                    source_tag = paper.get('source', '')
+                    
+                    # Add a badge/color based on source
+                    if "Cites Main" in source_tag:
+                        color = "green"
+                    elif "High Local" in source_tag:
+                        color = "blue"
+                    else:
+                        color = "orange"
+                        
+                    st.markdown(f"**{i+1}. {title}** :{color}[{source_tag}]")
+                    st.caption(f"Author: {paper.get('author', 'N/A')} | Year: {paper.get('year', 'N/A')} | Citations: {paper.get('citations', 0)}")
+                    if paper.get('doi'):
+                        st.caption(f"DOI: [{paper['doi']}](https://doi.org/{paper['doi']})")
+                    st.markdown("---")
+            else:
+                st.info("No suggestions found for this paper.")
         else:
             st.error("Could not build network. Ensure the PDF contains a valid DOI.")
 
@@ -71,7 +98,7 @@ if uploaded_file is not None:
         def update_status(msg):
             status_placeholder.info(msg)
             
-        # Excel logic can handle file-like object, but let's stick to interface consistency
+        # Excel logic
         G = Cross_Reference.build_cross_reference_network(uploaded_file, progress_callback=update_status)
         
         if G:

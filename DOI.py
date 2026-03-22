@@ -52,3 +52,48 @@ def get_paper_details(doi):
 def get_referenced_dois(references):
     if not references: return []
     return [item['DOI'] for item in references if item and 'DOI' in item]
+
+def get_citing_papers(doi):
+    """
+    Finds papers that cite the given DOI.
+    Returns a list of dictionaries.
+    """
+    url = f"https://api.crossref.org/works?filter=references:{doi}&select=DOI,title,is-referenced-by-count,author,published-print,published-online&rows=50"
+    
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            data = response.json()
+            items = data.get('message', {}).get('items', [])
+            
+            results = []
+            for item in items:
+                # Extract Year
+                date_info = item.get('published-print') or item.get('published-online')
+                year = None
+                if date_info and 'date-parts' in date_info:
+                    try:
+                        year = date_info['date-parts'][0][0]
+                    except:
+                        pass
+                
+                # Extract Author
+                authors = item.get('author', [])
+                author_name = "Unknown"
+                if authors:
+                    author_name = authors[0].get('family', 'Unknown')
+
+                results.append({
+                    'doi': item.get('DOI'),
+                    'title': item.get('title', ['No Title'])[0],
+                    'citations': item.get('is-referenced-by-count', 0),
+                    'year': year,
+                    'author': author_name,
+                    'source': 'Citing Paper' # Default source
+                })
+            return results
+        else:
+            return []
+    except Exception as e:
+        print(f"Error fetching citing papers: {e}")
+        return []

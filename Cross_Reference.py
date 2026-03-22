@@ -182,7 +182,6 @@ def get_cross_ref_plots(G):
         showlegend=False
     ))
 
-    # Added: Y-axis label mapping
     y_labels_map = {i: f"{(i-1)*50}-{i*50}" for i in range(1, 21)}
     y_labels_map[1] = "<50"
     y_labels_map[21] = ">1000"
@@ -193,10 +192,9 @@ def get_cross_ref_plots(G):
         yaxis_title='Citation Count Range', # Updated Title
         hovermode='closest',
         xaxis=dict(showgrid=True, zeroline=True, showticklabels=True),
-        # Modified: Y-axis ticks to match bins
         yaxis=dict(
             tickmode='array',
-            tickvals=list(range(1, 16)),
+            tickvals=list(range(1, 22)),
             ticktext=list(y_labels_map.values()),
             showgrid=True, 
             zeroline=True
