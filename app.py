@@ -73,15 +73,13 @@ if uploaded_file is not None:
                     title = paper.get('title', 'Unknown Title')
                     source_tag = paper.get('source', '')
                     
-                    # Add a badge/color based on source
-                    if "Cites Main" in source_tag:
-                        color = "green"
-                    elif "High Local" in source_tag:
-                        color = "blue"
-                    else:
-                        color = "orange"
-                        
-                    st.markdown(f"**{i+1}. {title}** :{color}[{source_tag}]")
+                    # Display Title first
+                    st.markdown(f"**{i+1}. {title}**")
+                    
+                    # Display Reason immediately after title
+                    st.caption(f"Reason: {source_tag}")
+                    
+                    # Display other details
                     st.caption(f"Author: {paper.get('author', 'N/A')} | Year: {paper.get('year', 'N/A')} | Citations: {paper.get('citations', 0)}")
                     if paper.get('doi'):
                         st.caption(f"DOI: [{paper['doi']}](https://doi.org/{paper['doi']})")
