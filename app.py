@@ -41,7 +41,8 @@ if uploaded_file is not None:
         def update_status(msg):
             status_placeholder.info(msg)
 
-        # Build Graph (Returns G and suggestions)
+        # --- FIX IS HERE ---
+        # build_reference_network now returns TWO values: G and suggestions
         G, suggestions = Local_Reference.build_reference_network(tmp_path, progress_callback=update_status)
         
         # Clean up temp file
