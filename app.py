@@ -41,8 +41,7 @@ if uploaded_file is not None:
         def update_status(msg):
             status_placeholder.info(msg)
 
-        # --- FIX IS HERE ---
-        # build_reference_network now returns TWO values: G and suggestions
+        # Build Graph (Returns G and suggestions)
         G, suggestions = Local_Reference.build_reference_network(tmp_path, progress_callback=update_status)
         
         # Clean up temp file
@@ -78,10 +77,21 @@ if uploaded_file is not None:
                     st.markdown(f"**{i+1}. {title}**")
                     
                     # Display Reason immediately after title
-                    st.caption(f"Reason: {source_tag}")
+                    # Color code based on reason
+                    if "Recent" in source_tag:
+                        color = "green"
+                        reason_text = f"Reason: Published within 2 years of main paper with high global citations."
+                    elif "Local" in source_tag:
+                        color = "blue"
+                        reason_text = f"Reason: Highly cited by other papers within this network."
+                    else:
+                        color = "gray"
+                        reason_text = f"Reason: {source_tag}"
+                        
+                    st.caption(f":{color}[{source_tag}] - {reason_text}")
                     
                     # Display other details
-                    st.caption(f"Author: {paper.get('author', 'N/A')} | Year: {paper.get('year', 'N/A')} | Citations: {paper.get('citations', 0)}")
+                    st.caption(f"Author: {paper.get('author', 'N/A')} | Year: {paper.get('year', 'N/A')} | Global Citations: {paper.get('citations', 0)}")
                     if paper.get('doi'):
                         st.caption(f"DOI: [{paper['doi']}](https://doi.org/{paper['doi']})")
                     st.markdown("---")

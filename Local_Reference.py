@@ -4,7 +4,7 @@ import plotly.graph_objects as go
 import numpy as np
 import time
 import random
-from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois, get_citing_papers
+from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois
 
 def get_citation_class(citations):
     if citations < 50: return 1
@@ -85,107 +85,69 @@ def build_reference_network(pdf_path, progress_callback=None):
             continue
 
     # ---------------------------------------------------------
-    # NEW SUGGESTION LOGIC STARTS HERE
+    # NEW SUGGESTION LOGIC
     # ---------------------------------------------------------
     suggestions = []
-    LIMIT = 10
     
     if progress_callback: progress_callback("Generating suggestions...")
 
-    # CRITERIA 1: Top 10 articles citing the main paper
+    # Get Main Year (integer)
     try:
-        citing_papers = get_citing_papers(main_doi)
-        citing_papers.sort(key=lambda x: x['citations'], reverse=True)
-        
-        for p in citing_papers:
-            p['source'] = 'Cites Main Paper'
-        
-        # Take up to LIMIT
-        suggestions.extend(citing_papers[:LIMIT])
-    except Exception as e:
-        print(f"Error fetching forward citations: {e}")
+        main_year_int = int(main_year)
+    except:
+        main_year_int = 0
 
-    # CRITERIA 2: Fill with references having highest Local Citation
-    if len(suggestions) < LIMIT:
-        needed = LIMIT - len(suggestions)
-        
-        # Calculate local citations (in_degree) for all references
-        # valid_refs contains DOIs of references
-        ref_local_citations = []
-        for doi in valid_refs:
-            local_cite_count = G.in_degree(doi)
-            # Get stored global data
-            node_data = G.nodes[doi]
-            ref_local_citations.append({
-                'doi': doi,
-                'title': f"Reference: {node_data.get('author', '?')} ({node_data.get('year', '?')})", # We don't have title here, constructing a label
-                'citations': node_data.get('citations', 0),
-                'year': node_data.get('year'),
-                'author': node_data.get('author'),
-                'local_citations': local_cite_count,
-                'source': 'High Local Citation'
-            })
-        
-        # Sort by local citation count descending
-        ref_local_citations.sort(key=lambda x: x['local_citations'], reverse=True)
-        
-        # Add top ones
-        count_added = 0
-        for item in ref_local_citations:
-            # Avoid duplicates if somehow already in suggestions (unlikely but safe)
-            if item['doi'] not in [s['doi'] for s in suggestions]:
-                suggestions.append(item)
-                count_added += 1
-                if count_added >= needed:
-                    break
+    # Helper to get year safely
+    def get_node_year(doi):
+        try:
+            return int(G.nodes[doi].get('year', 0))
+        except:
+            return 0
 
-    # CRITERIA 3: Fill with reference having highest Global Citation + its forward citations
-    if len(suggestions) < LIMIT:
-        needed = LIMIT - len(suggestions)
-        
-        # Sort valid references by global citation count
-        ref_global_citations = []
-        for doi in valid_refs:
-            node_data = G.nodes[doi]
-            ref_global_citations.append({
-                'doi': doi,
-                'citations': node_data.get('citations', 0),
-                'author': node_data.get('author'),
-                'year': node_data.get('year')
-            })
-        
-        ref_global_citations.sort(key=lambda x: x['citations'], reverse=True)
-        
-        # Find the top reference that isn't already in suggestions
-        top_ref = None
-        for r in ref_global_citations:
-            if r['doi'] not in [s['doi'] for s in suggestions]:
-                top_ref = r
-                break
-        
-        if top_ref:
-            # Add the reference itself
-            suggestions.append({
-                'doi': top_ref['doi'],
-                'title': f"Reference: {top_ref['author']} ({top_ref['year']})",
-                'citations': top_ref['citations'],
-                'year': top_ref['year'],
-                'author': top_ref['author'],
-                'source': 'High Global Citation Reference'
-            })
-            
-            # Get papers citing this reference
-            if len(suggestions) < LIMIT:
-                citing_top_ref = get_citing_papers(top_ref['doi'])
-                citing_top_ref.sort(key=lambda x: x['citations'], reverse=True)
-                
-                for p in citing_top_ref:
-                    p['source'] = f"Cites Ref ({top_ref['author']})"
-                    # Check duplicate
-                    if p['doi'] not in [s['doi'] for s in suggestions]:
-                        suggestions.append(p)
-                        if len(suggestions) >= LIMIT:
-                            break
+    # --- CRITERIA 1: Recent High Impact References ---
+    # Condition: (MainYear - 2) <= RefYear <= MainYear
+    recent_refs = []
+    for doi in valid_refs:
+        ref_year = get_node_year(doi)
+        # Check range [MainYear - 2, MainYear]
+        if (main_year_int - 2) <= ref_year <= main_year_int:
+            recent_refs.append(doi)
+    
+    # Sort by Global Citations (descending)
+    recent_refs.sort(key=lambda d: G.nodes[d].get('citations', 0), reverse=True)
+    
+    # Select Top 5
+    selected_recent = recent_refs[:5]
+    for doi in selected_recent:
+        node = G.nodes[doi]
+        suggestions.append({
+            'doi': doi,
+            'title': f"Reference: {node.get('author', '?')} ({node.get('year', '?')})",
+            'citations': node.get('citations', 0),
+            'year': node.get('year'),
+            'author': node.get('author'),
+            'source': 'Recent High Impact Reference'
+        })
+
+    # --- CRITERIA 2: High Local Citation References ---
+    # Exclude references already selected in Criteria 1
+    remaining_refs = [d for d in valid_refs if d not in selected_recent]
+    
+    # Sort by Local Citations (in-degree) descending
+    remaining_refs.sort(key=lambda d: G.in_degree(d), reverse=True)
+    
+    # Select Top 5
+    selected_local = remaining_refs[:5]
+    for doi in selected_local:
+        node = G.nodes[doi]
+        suggestions.append({
+            'doi': doi,
+            'title': f"Reference: {node.get('author', '?')} ({node.get('year', '?')})",
+            'citations': node.get('citations', 0),
+            'year': node.get('year'),
+            'author': node.get('author'),
+            'source': 'High Local Citation Reference'
+        })
 
     return G, suggestions
 
