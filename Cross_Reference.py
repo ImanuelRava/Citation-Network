@@ -8,22 +8,26 @@ from DOI import get_paper_details
 
 # --- Added Logic: Citation Class Function ---
 def get_citation_class(citations):
-    if citations < 20: return 1
-    elif citations < 40: return 2
-    elif citations < 60: return 3
-    elif citations < 80: return 4
-    elif citations < 100: return 5
-    elif citations < 120: return 6
-    elif citations < 140: return 7
-    elif citations < 160: return 8
-    elif citations < 180: return 9
-    elif citations < 200: return 10
-    elif citations < 300: return 11
-    elif citations < 400: return 12
-    elif citations < 500: return 13
-    elif citations < 1000: return 14
-    else: return 15
-# ---------------------------------------------
+    if citations < 50: return 1
+    elif citations < 100: return 2
+    elif citations < 150: return 3
+    elif citations < 200: return 4
+    elif citations < 250: return 5
+    elif citations < 300: return 6
+    elif citations < 350: return 7
+    elif citations < 400: return 8
+    elif citations < 450: return 9
+    elif citations < 500: return 10
+    elif citations < 550: return 11
+    elif citations < 600: return 12
+    elif citations < 650: return 13
+    elif citations < 700: return 14
+    elif citations < 750: return 15
+    elif citations < 800: return 16
+    elif citations < 850: return 18
+    elif citations < 900: return 19
+    elif citations < 950: return 20
+    else: return 21
 
 def read_dois_from_excel(excel_file_like):
     try:
@@ -179,9 +183,9 @@ def get_cross_ref_plots(G):
     ))
 
     # Added: Y-axis label mapping
-    y_labels_map = {i: f"{(i-1)*20}-{i*20}" for i in range(1, 15)}
-    y_labels_map[1] = "<20"
-    y_labels_map[15] = ">1000"
+    y_labels_map = {i: f"{(i-1)*50}-{i*50}" for i in range(1, 21)}
+    y_labels_map[1] = "<50"
+    y_labels_map[21] = ">1000"
 
     fig1.update_layout(
         title='Local Citation Network',
