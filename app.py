@@ -1,207 +1,171 @@
 # app.py
 import streamlit as st
-import streamlit.components.v1 as components
-import tempfile
-import os
-import Local_Reference
-import Forward_Reference
-import Cross_Reference
+import networkx as nx
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="Research Network Builder", layout="wide")
+# Import your modules
+from Forward_Reference import build_forward_network
+from Local_Reference import build_reference_network
+from Cross_Reference import build_cross_reference_network
+from utils import generate_network_plot
 
-st.title("📚 Research Network Visualizer")
+# ---------------------------------------------------------
+# Page Setup
+# ---------------------------------------------------------
+st.set_page_config(layout="wide", page_title="Citation Network Explorer")
+st.title("📚 Citation Network Explorer")
 
-st.markdown("""
-Upload a **PDF** to analyze its citation network, or an **Excel file** (list of DOIs) to cross-reference multiple papers.
-""")
+# ---------------------------------------------------------
+# Session State Initialization
+# ---------------------------------------------------------
+if 'graph' not in st.session_state:
+    st.session_state.graph = None
+if 'graph_type' not in st.session_state:
+    st.session_state.graph_type = None
+if 'suggestions' not in st.session_state:
+    st.session_state.suggestions = []
+if 'highlight_node' not in st.session_state:
+    st.session_state.highlight_node = None
 
-# --- Helper Function for Interactive Plotting ---
-def show_interactive_plot(fig):
-    div_id = "network_plot"
-    html_string = fig.to_html(include_plotlyjs='cdn', div_id=div_id)
-    
-    # JavaScript to handle immediate interaction
-    # 1. Identifies connected nodes via edges.
-    # 2. Restores original color (from meta) for connected nodes.
-    # 3. Fades out unconnected nodes.
-    js_script = f"""
-    <script>
-    var plotDiv = document.getElementById('{div_id}');
-    
-    plotDiv.on('plotly_click', function(data){{
-        var selectedNode = data.points[0].customdata; 
+# ---------------------------------------------------------
+# Sidebar: Controls
+# ---------------------------------------------------------
+st.sidebar.header("1. Build Network")
+
+analysis_type = st.sidebar.radio("Select Analysis Type", [
+    "Forward Citation (PDF)", 
+    "Backward Reference (PDF)", 
+    "Cross Reference (Excel)"
+])
+
+uploaded_file = st.sidebar.file_uploader("Upload File", type=['pdf', 'xlsx'])
+
+# Progress placeholder in sidebar
+progress_placeholder = st.sidebar.empty()
+
+def log_progress(msg):
+    """Log progress to UI and console"""
+    progress_placeholder.write(f"⏳ {msg}")
+    print(msg)
+
+if st.sidebar.button("Build Network"):
+    if uploaded_file is not None:
+        # Reset state for new network
+        st.session_state.highlight_node = None
         
-        var connectedNodes = new Set();
-        connectedNodes.add(selectedNode);
-        
-        var edgeUpdates = {{ 'line.color': [], 'line.width': [] }};
-        var edgeIndices = [];
-        
-        var traces = plotDiv.data;
-        
-        // 1. Process Edges to find neighbors and style edges
-        for(var i = 0; i < traces.length; i++){{
-            var trace = traces[i];
-            
-            if(trace.mode === 'lines' && trace.meta && trace.meta.length === 2){{
-                var u = trace.meta[0];
-                var v = trace.meta[1];
+        with st.spinner("Processing network..."):
+            try:
+                G = None
+                suggestions = []
+                g_type = None
                 
-                edgeIndices.push(i);
+                if analysis_type == "Forward Citation (PDF)":
+                    G, suggestions = build_forward_network(uploaded_file, progress_callback=log_progress)
+                    g_type = "forward"
+                elif analysis_type == "Backward Reference (PDF)":
+                    G, suggestions = build_reference_network(uploaded_file, progress_callback=log_progress)
+                    g_type = "local"
+                elif analysis_type == "Cross Reference (Excel)":
+                    G = build_cross_reference_network(uploaded_file, progress_callback=log_progress)
+                    suggestions = [] 
+                    g_type = "cross"
                 
-                if(u === selectedNode || v === selectedNode){{
-                    edgeUpdates['line.color'].push('rgba(255, 0, 0, 1.0)');
-                    edgeUpdates['line.width'].push(2.5);
-                    connectedNodes.add(u);
-                    connectedNodes.add(v);
-                }} else {{
-                    edgeUpdates['line.color'].push('rgba(200, 200, 200, 0.2)');
-                    edgeUpdates['line.width'].push(1);
-                }}
-            }}
-        }}
-        
-        // Apply Edge Updates
-        Plotly.restyle(plotDiv, edgeUpdates, edgeIndices);
-        
-        // 2. Process Nodes to style nodes (Fade unconnected)
-        for(var i = 0; i < traces.length; i++){{
-            var trace = traces[i];
-            if(trace.mode === 'markers' && trace.customdata){{
-                var newColors = [];
-                
-                for(var j = 0; j < trace.customdata.length; j++){{
-                    var nodeId = trace.customdata[j];
-                    if(connectedNodes.has(nodeId)){{
-                        // Connected Node: Restore original color from 'meta'
-                        if(trace.meta && trace.meta[j]){{
-                             newColors.push(trace.meta[j]);
-                        }} else {{
-                             // Fallback if meta is missing
-                             newColors.push('#1f77b4'); 
-                        }}
-                    }} else {{
-                        // Unconnected Node: Fade to light gray
-                        newColors.push('rgba(211, 211, 211, 0.4)'); 
-                    }}
-                }}
-                
-                Plotly.restyle(plotDiv, {{'marker.color': [newColors]}}, i);
-                break; 
-            }}
-        }}
-    }});
-    </script>
-    """
-    
-    components.html(html_string + js_script, height=650)
-
-# --- File Uploader Logic ---
-uploaded_file = st.file_uploader(
-    "Choose a file",
-    type=['pdf', 'xlsx', 'xls'],
-    help="Select a PDF or Excel file"
-)
-
-if uploaded_file is not None:
-    file_ext = os.path.splitext(uploaded_file.name)[1].lower()
-    
-    if file_ext == '.pdf':
-        analysis_mode = st.selectbox(
-            "Select Analysis Mode:",
-            ("Reference Network (Backward)", "Citation Network (Forward)")
-        )
-        
-        st.info(f"Processing PDF in {analysis_mode} mode...")
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(uploaded_file.getvalue())
-            tmp_path = tmp.name
-        
-        status_placeholder = st.empty()
-        def update_status(msg):
-            status_placeholder.info(msg)
-
-        # --- Logic Branching ---
-        if analysis_mode == "Reference Network (Backward)":
-            G, suggestions = Local_Reference.build_reference_network(tmp_path, progress_callback=update_status)
-            plot_func = Local_Reference.get_network_plots
-        else: # Forward
-            G, suggestions = Forward_Reference.build_forward_network(tmp_path, progress_callback=update_status)
-            plot_func = Forward_Reference.get_network_plots
-        
-        os.unlink(tmp_path)
-        
-        if G:
-            status_placeholder.success("Processing Complete!")
-            st.write(f"**Nodes found:** {G.number_of_nodes()}")
-            
-            fig_net, fig_mat = plot_func(G, highlight_node=None)
-            
-            tab1, tab2 = st.tabs(["Citation Network", "Cross-Reference Matrix"])
-            
-            with tab1:
-                if fig_net:
-                    show_interactive_plot(fig_net)
+                if G and G.number_of_nodes() > 0:
+                    st.session_state.graph = G
+                    st.session_state.graph_type = g_type
+                    st.session_state.suggestions = suggestions
+                    st.success(f"Network built! Nodes: {G.number_of_nodes()}, Edges: {G.number_of_edges()}")
+                    progress_placeholder.empty() # Clear progress text
+                elif G is not None and G.number_of_nodes() < 2:
+                     st.warning("Network built, but too few nodes to display.")
                 else:
-                    st.warning("Not enough data for plot.")
-                    
-            with tab2:
-                if fig_mat:
-                    st.plotly_chart(fig_mat, use_container_width=True)
-
-            # --- Suggestions ---
-            st.divider()
-            if suggestions:
-                st.subheader("📚 Recommended Articles")
-                
-                for i, paper in enumerate(suggestions):
-                    title = paper.get('title', 'Unknown Title')
-                    st.markdown(f"**{i+1}. {title}**")
-                    
-                    source_tag = paper.get('source', '')
-                    if "Recent" in source_tag: color = "green"
-                    elif "Local" in source_tag: color = "blue"
-                    else: color = "gray"
-
-                    st.caption(f":{color}[{source_tag}]")
-                    st.caption(f"Author: {paper.get('author', 'N/A')} | Year: {paper.get('year', 'N/A')} | Citations: {paper.get('citations', 0)}")
-                    if paper.get('doi'):
-                        st.caption(f"DOI: [{paper['doi']}](https://doi.org/{paper['doi']})")
-                    st.markdown("---")
-            else:
-                st.info("No suggestions found for this paper.")
-        else:
-            st.error("Could not build network. Ensure the PDF contains a valid DOI.")
-
-    elif file_ext in ['.xlsx', '.xls']:
-        st.info("Processing Excel file... fetching data for each DOI.")
-        
-        status_placeholder = st.empty()
-        def update_status(msg):
-            status_placeholder.info(msg)
-            
-        G = Cross_Reference.build_cross_reference_network(uploaded_file, progress_callback=update_status)
-        
-        if G:
-            status_placeholder.success("Processing Complete!")
-            st.write(f"**Papers processed:** {G.number_of_nodes()}")
-            
-            fig_net, fig_mat = Cross_Reference.get_cross_ref_plots(G, highlight_node=None)
-            
-            tab1, tab2 = st.tabs(["Network Graph", "Adjacency Matrix"])
-            
-            with tab1:
-                if fig_net:
-                    show_interactive_plot(fig_net)
-                else:
-                    st.warning("Not enough data for plot.")
-                    
-            with tab2:
-                if fig_mat:
-                    st.plotly_chart(fig_mat, use_container_width=True)
-        else:
-            st.error("No valid DOIs processed. Check your Excel file column.")
-            
+                    st.error("Failed to build network or no data found.")
+            except Exception as e:
+                st.error(f"Error: {e}")
+                import traceback
+                st.error(traceback.format_exc())
     else:
-        st.error("Unsupported file format.")
+        st.warning("Please upload a file.")
+
+# ---------------------------------------------------------
+# Sidebar: Suggestions Display
+# ---------------------------------------------------------
+if st.session_state.suggestions:
+    st.sidebar.header("2. Suggested Articles")
+    st.sidebar.markdown("Top papers based on impact & recency:")
+    
+    for i, sugg in enumerate(st.session_state.suggestions):
+        with st.sidebar.expander(f"{i+1}. {sugg.get('title', 'No Title')[:50]}..."):
+            st.markdown(f"**Source:** {sugg.get('source', 'N/A')}")
+            st.markdown(f"**Author:** {sugg.get('author', 'N/A')}")
+            st.markdown(f"**Year:** {sugg.get('year', 'N/A')}")
+            st.markdown(f"**Citations:** {sugg.get('citations', 0)}")
+            if sugg.get('doi'):
+                st.markdown(f"[View Paper](https://doi.org/{sugg.get('doi')})")
+
+# ---------------------------------------------------------
+# Main Area: Visualization
+# ---------------------------------------------------------
+G = st.session_state.graph
+g_type = st.session_state.graph_type
+
+if G and G.number_of_nodes() > 1:
+    # Define Title and Color Map
+    title = "Citation Network"
+    color_map = {}
+    
+    if g_type == 'forward':
+        title = "Forward Citation Network"
+        for n in G.nodes():
+            color_map[n] = '#FF4444' if G.nodes[n].get('is_main') else '#88C0D0'
+    elif g_type == 'local':
+        title = "Backward Reference Network"
+        for n in G.nodes():
+            color_map[n] = '#FF4444' if G.nodes[n].get('is_main') else '#88C0D0'
+    elif g_type == 'cross':
+        title = "Cross Reference Network"
+        for n in G.nodes():
+            color_map[n] = '#2ca02c' if G.nodes[n].get('citations', 0) > 200 else '#1f77b4'
+
+    # Instruction
+    st.info("🖱️ **Interaction:** Click a node to highlight its connections. Click the background to reset.")
+
+    # --- Plotting ---
+    # We pass the highlight_node from session_state
+    fig = generate_network_plot(
+        G, 
+        title=title, 
+        highlight_node=st.session_state.highlight_node,
+        default_color_map=color_map
+    )
+    
+    # Render chart with interactivity
+    # on_select="rerun" ensures the app reloads when you click a point
+    selection = st.plotly_chart(fig, use_container_width=True, on_select="rerun")
+
+    # Handle Click Interaction
+    if selection and selection['selection'] and selection['selection']['point_indices']:
+        # Get the index of the clicked point
+        idx = selection['selection']['point_indices'][0]
+        
+        # Retrieve the sorted list of nodes used in the plot
+        # We must sort nodes to ensure index matches the plot
+        nodes_sorted = sorted(G.nodes())
+        
+        if 0 <= idx < len(nodes_sorted):
+            clicked_node = nodes_sorted[idx]
+            
+            # Only update state if it changed to prevent unnecessary reruns
+            if st.session_state.highlight_node != clicked_node:
+                st.session_state.highlight_node = clicked_node
+                st.rerun()
+    elif selection and selection['selection'] is None:
+        # If user clicked empty space (deselected)
+        if st.session_state.highlight_node is not None:
+            st.session_state.highlight_node = None
+            st.rerun()
+
+elif G and G.number_of_nodes() == 1:
+    st.info("Only one node found. Need more data for a network.")
+else:
+    st.info("Upload a file and click 'Build Network' to begin.")

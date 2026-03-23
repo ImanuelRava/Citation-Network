@@ -2,12 +2,19 @@
 import requests
 import pdfplumber
 import re
+import streamlit as st
 from typing import Tuple, List, Dict, Any, Optional
+
+# ---------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------
+USER_AGENT = "CitationNetworkExplorer/1.0 (mailto:user@example.com)"
+HEADERS = {'User-Agent': USER_AGENT}
 
 # ---------------------------------------------------------
 # DOI Extraction
 # ---------------------------------------------------------
-def extract_doi_from_pdf(pdf_path: str) -> str:
+def extract_doi_from_pdf(pdf_path) -> str:
     """
     Extracts the first found DOI from a PDF file.
     """
@@ -24,16 +31,18 @@ def extract_doi_from_pdf(pdf_path: str) -> str:
     raise ValueError("No DOI found in the PDF.")
 
 # ---------------------------------------------------------
-# Paper Details Fetching
+# Paper Details Fetching (Cached)
 # ---------------------------------------------------------
+@st.cache_data(ttl=3600, show_spinner="Fetching paper details from API...")
 def get_paper_details(doi: str) -> Tuple[str, Optional[int], int, List, str]:
     """
     Fetches author, year, citation count, references, and title for a DOI.
+    Cached to minimize API calls.
     Returns: (author, year, citations, references, title)
     """
     url = f"https://api.crossref.org/works/{doi}"
     try:
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=15, headers=HEADERS)
         resp.raise_for_status()
         
         msg = resp.json()['message']
@@ -67,13 +76,17 @@ def get_referenced_dois(references: List) -> List[str]:
     if not references: return []
     return [ref['DOI'] for ref in references if ref and 'DOI' in ref]
 
+@st.cache_data(ttl=3600, show_spinner="Fetching forward citations from OpenAlex...")
 def get_forward_citations(doi: str, max_papers: int = 1000) -> List[Dict[str, Any]]:
     """Fetches papers that cite the given DOI using OpenAlex API."""
     base_url = "https://api.openalex.org"
+    
+    # Step 1: Get OpenAlex ID for the DOI
+    # We use a generic search to get the ID first to ensure the filter works
     search_url = f"{base_url}/works/doi:{doi}"
     
     try:
-        resp = requests.get(search_url, timeout=10)
+        resp = requests.get(search_url, timeout=15, headers=HEADERS)
         if resp.status_code != 200:
             return []
         
@@ -93,7 +106,7 @@ def get_forward_citations(doi: str, max_papers: int = 1000) -> List[Dict[str, An
                 f"&select=id,doi,display_name,publication_year,cited_by_count,authorships,referenced_works"
             )
             
-            resp = requests.get(citations_url, timeout=20)
+            resp = requests.get(citations_url, timeout=20, headers=HEADERS)
             if resp.status_code != 200:
                 break
             
