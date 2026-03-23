@@ -172,7 +172,7 @@ def get_cross_ref_plots(G):
         marker=dict(
             size=10,
             color=local_citations, 
-            colorscale='Viridis',
+            colorscale='RdYlGn',
             showscale=False, 
             line_width=1
         ),

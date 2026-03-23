@@ -106,7 +106,7 @@ def build_forward_network(pdf_path, progress_callback=None):
     if progress_callback: progress_callback(f"Found {cross_ref_count} cross-references.")
 
     # ---------------------------------------------------------
-    # SUGGESTION LOGIC (Similar to Local_Reference)
+    # SUGGESTION LOGIC
     # ---------------------------------------------------------
     suggestions = []
     
@@ -147,7 +147,6 @@ def build_forward_network(pdf_path, progress_callback=None):
             local_count = G.in_degree(node_id)
             local_cite_list.append((paper, local_count))
     
-    # Sort by Local Citation Count (descending)
     local_cite_list.sort(key=lambda x: x[1], reverse=True)
     
     for paper, count in local_cite_list[:5]:
@@ -178,6 +177,8 @@ def get_network_plots(G):
     years = [G.nodes[n].get('year', 0) for n in nodes]
     raw_citations = [G.nodes[n].get('citations', 0) for n in nodes]
     y_classes = [get_citation_class(c) for c in raw_citations]
+    
+    local_citations = [G.in_degree(n) for n in nodes]
     
     years_j = [y + random.uniform(-0.3, 0.3) for y in years]
     y_j = [y + random.uniform(-0.1, 0.1) for y in y_classes]
@@ -211,12 +212,14 @@ def get_network_plots(G):
         else:
             colors.append('#88C0D0')
     
+    # --- UPDATED: Hover Text with Local Citations ---
     hover_texts = [
         f"<b>Title:</b> {G.nodes[n].get('title', 'N/A')}<br>"
         f"<b>DOI:</b> {n if not str(n).startswith('ref_') else 'N/A'}<br>"
         f"<b>Author:</b> {G.nodes[n].get('author')}<br>"
         f"<b>Year:</b> {years[i]}<br>"
-        f"<b>Citations:</b> {raw_citations[i]}" 
+        f"<b>Global Citations:</b> {raw_citations[i]}<br>"
+        f"<b>Local Citations:</b> {local_citations[i]}" 
         for i, n in enumerate(nodes)
     ]
 
