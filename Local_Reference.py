@@ -1,33 +1,14 @@
 # Local_Reference.py
 import networkx as nx
 import plotly.graph_objects as go
-import numpy as np
-import time
 import random
+import time
 from DOI import extract_doi_from_pdf, get_paper_details, get_referenced_dois
+from utils import get_citation_class, get_y_axis_labels, generate_adjacency_heatmap
 
-def get_citation_class(citations):
-    if citations < 50: return 1
-    elif citations < 100: return 2
-    elif citations < 150: return 3
-    elif citations < 200: return 4
-    elif citations < 250: return 5
-    elif citations < 300: return 6
-    elif citations < 350: return 7
-    elif citations < 400: return 8
-    elif citations < 450: return 9
-    elif citations < 500: return 10
-    elif citations < 550: return 11
-    elif citations < 600: return 12
-    elif citations < 650: return 13
-    elif citations < 700: return 14
-    elif citations < 750: return 15
-    elif citations < 800: return 16
-    elif citations < 850: return 18
-    elif citations < 900: return 19
-    elif citations < 950: return 20
-    else: return 21
-
+# ---------------------------------------------------------
+# Backward Citation Network
+# ---------------------------------------------------------
 def build_reference_network(pdf_path, progress_callback=None):
     # 1. Extract Main DOI
     try:
@@ -41,20 +22,15 @@ def build_reference_network(pdf_path, progress_callback=None):
 
     # 2. Get Main Paper Details
     try:
-        main_author, main_year, main_citations, _, main_title = get_paper_details(main_doi)
+        main_author, main_year, main_citations, main_refs, main_title = get_paper_details(main_doi)
         G.add_node(main_doi, author=main_author or "Unknown", year=main_year or 0, 
                    citations=main_citations, is_main=True, title=main_title)
     except Exception as e:
         if progress_callback: progress_callback(f"Error fetching main paper: {e}")
         return None, []
 
-    # 3. Get References of Main Paper
-    try:
-        _, _, _, main_refs, _ = get_paper_details(main_doi)
-        ref_dois = get_referenced_dois(main_refs)
-    except Exception:
-        ref_dois = []
-
+    # 3. Get References
+    ref_dois = get_referenced_dois(main_refs) if main_refs else []
     valid_refs = []
     total_refs = len(ref_dois)
     
@@ -62,16 +38,16 @@ def build_reference_network(pdf_path, progress_callback=None):
     for i, doi in enumerate(ref_dois):
         if progress_callback: progress_callback(f"Processing reference {i+1}/{total_refs}...")
         try:
-            time.sleep(0.4) 
+            time.sleep(0.4) # Rate limiting
             author, year, cites, _, title = get_paper_details(doi)
             G.add_node(doi, author=author or "Unknown", year=year or 0, 
                        citations=cites, is_main=False, title=title)
-            G.add_edge(main_doi, doi)
+            G.add_edge(main_doi, doi) # Main paper -> Reference
             valid_refs.append(doi)
         except Exception:
             continue
 
-    # 5. Check Cross-References
+    # 5. Check Cross-References (References citing each other)
     if progress_callback: progress_callback("Checking cross-references (Local Citations)...")
     for i, doi in enumerate(valid_refs):
         try:
@@ -80,15 +56,14 @@ def build_reference_network(pdf_path, progress_callback=None):
             cited = get_referenced_dois(sources)
             for c in cited:
                 if c in valid_refs:
-                    G.add_edge(doi, c)
+                    G.add_edge(doi, c) # Reference A -> Reference B
         except Exception:
             continue
 
     # ---------------------------------------------------------
-    # SUGGESTION LOGIC
+    # Analysis & Suggestions
     # ---------------------------------------------------------
     suggestions = []
-    
     if progress_callback: progress_callback("Generating suggestions...")
 
     try:
@@ -96,141 +71,101 @@ def build_reference_network(pdf_path, progress_callback=None):
     except:
         main_year_int = 0
 
-    def get_node_year(doi):
-        try:
-            return int(G.nodes[doi].get('year', 0))
-        except:
-            return 0
-
-    # --- CRITERIA 1: Recent High Impact References ---
+    # Criteria 1: Recent High Impact References
     recent_refs = []
     for doi in valid_refs:
-        ref_year = get_node_year(doi)
-        if (main_year_int - 2) <= ref_year <= main_year_int:
-            recent_refs.append(doi)
+        try:
+            ref_year = int(G.nodes[doi].get('year', 0))
+            if (main_year_int - 2) <= ref_year <= main_year_int:
+                recent_refs.append(doi)
+        except:
+            continue
     
     recent_refs.sort(key=lambda d: G.nodes[d].get('citations', 0), reverse=True)
-    
     selected_recent = recent_refs[:5]
+    
     for doi in selected_recent:
         node = G.nodes[doi]
         suggestions.append({
-            'doi': doi,
-            'title': node.get('title', 'No Title'), # Use real title
-            'citations': node.get('citations', 0),
-            'year': node.get('year'),
-            'author': node.get('author'),
-            'source': 'Recent High Impact Reference'
+            'doi': doi, 'title': node.get('title', 'No Title'),
+            'citations': node.get('citations', 0), 'year': node.get('year'),
+            'author': node.get('author'), 'source': 'Recent High Impact Reference'
         })
 
-    # --- CRITERIA 2: High Local Citation References ---
+    # Criteria 2: High Local Citation References
     remaining_refs = [d for d in valid_refs if d not in selected_recent]
     remaining_refs.sort(key=lambda d: G.in_degree(d), reverse=True)
     
-    selected_local = remaining_refs[:5]
-    for doi in selected_local:
+    for doi in remaining_refs[:5]:
         node = G.nodes[doi]
         suggestions.append({
-            'doi': doi,
-            'title': node.get('title', 'No Title'), # Use real title
-            'citations': node.get('citations', 0),
-            'year': node.get('year'),
-            'author': node.get('author'),
-            'source': 'High Local Citation Reference'
+            'doi': doi, 'title': node.get('title', 'No Title'),
+            'citations': node.get('citations', 0), 'year': node.get('year'),
+            'author': node.get('author'), 'source': 'High Local Citation Reference'
         })
 
     return G, suggestions
 
-def get_network_plots(G):
+# ---------------------------------------------------------
+# Network Plots
+# ---------------------------------------------------------
+def get_network_plots(G, highlight_node=None):
     if not G or G.number_of_nodes() < 2:
         return None, None
 
-    # --- PLOT 1: Citation Network Scatter ---
     nodes = list(G.nodes())
+    
+    # Data Preparation
     years = [G.nodes[n].get('year', 0) for n in nodes]
     raw_citations = [G.nodes[n].get('citations', 0) for n in nodes]
     y_classes = [get_citation_class(c) for c in raw_citations]
+    local_citations = [G.in_degree(n) for n in nodes]
     
+    # Jitter
     years_j = [y + random.uniform(-0.3, 0.3) for y in years]
     y_j = [y + random.uniform(-0.1, 0.1) for y in y_classes]
 
-    main_node = nodes[0]
-    
     fig1 = go.Figure()
 
+    # Draw Edges
+    node_idx_map = {n: i for i, n in enumerate(nodes)}
     for u, v in G.edges():
-        i_u, i_v = nodes.index(u), nodes.index(v)
-        color = 'rgba(128, 0, 128, 0.5)' if u == main_node else 'rgba(128, 128, 128, 0.4)'
-            
+        i_u, i_v = node_idx_map[u], node_idx_map[v]
         fig1.add_trace(go.Scatter(
-            x=[years_j[i_u], years_j[i_v]], 
-            y=[y_j[i_u], y_j[i_v]],
-            mode='lines',
-            line=dict(color=color, width=1),
-            hoverinfo='none',
-            showlegend=False
+            x=[years_j[i_u], years_j[i_v]], y=[y_j[i_u], y_j[i_v]],
+            mode='lines', line=dict(color='rgba(128, 128, 128, 0.6)', width=1.0),
+            hoverinfo='none', showlegend=False
         ))
 
+    # Node Colors
     colors = ['#FF4444' if G.nodes[n].get('is_main') else '#88C0D0' for n in nodes]
-    local_citations = [G.in_degree(n) for n in nodes]
     
+    # Hover Text
     hover_texts = [
-        f"Title: {G.nodes[n].get('title', 'N/A')}<br>"
-        f"DOI: {n}<br>"
-        f"Author: {G.nodes[n].get('author')}<br>"
-        f"Year: {years[i]}<br>"
-        f"Global Citations: {raw_citations[i]}<br>"
-        f"Local Citations: {local_citations[i]}" 
+        f"<b>Title:</b> {G.nodes[n].get('title', 'N/A')}<br>"
+        f"<b>DOI:</b> {n}<br>"
+        f"<b>Author:</b> {G.nodes[n].get('author')}<br>"
+        f"<b>Year:</b> {years[i]}<br>"
+        f"<b>Global Citations:</b> {raw_citations[i]}<br>"
+        f"<b>Local Citations:</b> {local_citations[i]}" 
         for i, n in enumerate(nodes)
     ]
 
     fig1.add_trace(go.Scatter(
-        x=years_j, y=y_j,
-        mode='markers',
-        marker=dict(size=10, color=colors),
-        hovertext=hover_texts,
-        hoverinfo='text'
+        x=years_j, y=y_j, mode='markers',
+        marker=dict(size=10, color=colors, line_width=1),
+        hovertemplate="%{hovertext}<extra></extra>", hovertext=hover_texts,
+        customdata=nodes
     ))
-
-    y_labels_map = {i: f"{(i-1)*50}-{i*50}" for i in range(1, 22)}
-    y_labels_map[1] = "<50"
-    y_labels_map[21] = ">1000"
 
     fig1.update_layout(
-        title="Citation Network",
-        xaxis_title="Publication Year",
-        yaxis_title="Citation Count Range",
-        yaxis=dict(tickmode='array', tickvals=list(range(1, 22)), ticktext=list(y_labels_map.values())),
-        height=600,
-        showlegend=False
+        title="Backward Citation Network",
+        xaxis_title="Publication Year", yaxis_title="Citation Count Range",
+        yaxis=dict(tickmode='array', tickvals=list(range(1, 22)), ticktext=list(get_y_axis_labels().values())),
+        height=600, showlegend=False, clickmode='event+select'
     )
 
-    # --- PLOT 2: Cross-Reference Matrix Heatmap ---
-    n = len(nodes)
-    matrix = np.zeros((n, n), dtype=int)
-    node_idx = {n: i for i, n in enumerate(nodes)}
-    
-    for u, v in G.edges():
-        if u in node_idx and v in node_idx:
-            matrix[node_idx[u], node_idx[v]] = 1
-            
-    labels = [f"{G.nodes[n].get('author','?')} ({G.nodes[n].get('year','?')})" for n in nodes]
-    
-    fig2 = go.Figure(data=go.Heatmap(
-        z=matrix,
-        x=labels,
-        y=labels,
-        colorscale='Blues',
-        showscale=False,
-        showlegend=False
-    ))
-    
-    fig2.update_layout(
-        title="Cross-Reference Matrix",
-        xaxis=dict(tickangle=90, tickfont=dict(size=10)),
-        yaxis=dict(tickfont=dict(size=10)),
-        height=700,
-        width=700
-    )
+    # Use shared heatmap logic
+    fig2 = generate_adjacency_heatmap(G)
 
     return fig1, fig2

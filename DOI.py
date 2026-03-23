@@ -2,13 +2,15 @@
 import requests
 import pdfplumber
 import re
+from typing import Tuple, List, Dict, Any, Optional
 
-def extract_doi_from_pdf(pdf_path):
+# ---------------------------------------------------------
+# DOI Extraction
+# ---------------------------------------------------------
+def extract_doi_from_pdf(pdf_path: str) -> str:
     """
     Extracts the first found DOI from a PDF file.
-    Uses a strict character class to avoid capturing trailing punctuation or citation text.
     """
-    # Regex Logic: Matches 10.XXXX/suffix
     doi_pattern = r'10\.\d{4,9}/[-._;()/:A-Z0-9]+'
     
     with pdfplumber.open(pdf_path) as pdf:
@@ -18,11 +20,17 @@ def extract_doi_from_pdf(pdf_path):
                 match = re.search(doi_pattern, text, re.IGNORECASE)
                 if match:
                     doi = match.group(0).strip()
-                    return doi.rstrip('.;,)') 
+                    return doi.rstrip('.;,)')
     raise ValueError("No DOI found in the PDF.")
 
-def get_paper_details(doi):
-    """Fetches author, year, citation count, references, and title for a DOI."""
+# ---------------------------------------------------------
+# Paper Details Fetching
+# ---------------------------------------------------------
+def get_paper_details(doi: str) -> Tuple[str, Optional[int], int, List, str]:
+    """
+    Fetches author, year, citation count, references, and title for a DOI.
+    Returns: (author, year, citations, references, title)
+    """
     url = f"https://api.crossref.org/works/{doi}"
     try:
         resp = requests.get(url, timeout=10)
@@ -34,7 +42,7 @@ def get_paper_details(doi):
         date_info = msg.get('published-print') or msg.get('published-online') or msg.get('published', {})
         year = date_info.get('date-parts', [[None]])[0][0]
 
-        # Author
+        # Author (Last author)
         authors = msg.get('author', [])
         author = "Unknown"
         if authors:
@@ -52,12 +60,15 @@ def get_paper_details(doi):
     except Exception as e:
         raise RuntimeError(f"Error fetching {doi}: {e}")
 
-def get_referenced_dois(references):
-    """Extracts DOIs from a list of reference objects."""
+# ---------------------------------------------------------
+# Cross-Reference Logic
+# ---------------------------------------------------------
+def get_referenced_dois(references: List) -> List[str]:
     if not references: return []
     return [ref['DOI'] for ref in references if ref and 'DOI' in ref]
 
-def get_forward_citations(doi):
+def get_forward_citations(doi: str, max_papers: int = 1000) -> List[Dict[str, Any]]:
+    """Fetches papers that cite the given DOI using OpenAlex API."""
     base_url = "https://api.openalex.org"
     search_url = f"{base_url}/works/doi:{doi}"
     
@@ -75,7 +86,6 @@ def get_forward_citations(doi):
         all_results = []
         page = 1
         per_page = 200
-        max_papers = 1000 
         
         while True:
             citations_url = (
