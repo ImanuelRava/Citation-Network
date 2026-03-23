@@ -5,7 +5,7 @@ import re
 
 def extract_doi_from_pdf(pdf_path):
     """Extracts the first found DOI from a PDF file."""
-    pattern = r'\b(10\.\d{4,}/[^\s]+)\b'
+    pattern = r'/^10.\d{4,9}\/[-._;()/:A-Z0-9]+$/i'
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
